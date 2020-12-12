@@ -24,7 +24,6 @@ import imgproc
 import file_utils
 import json
 import zipfile
-import iter
 
 from craft import CRAFT
 
@@ -118,25 +117,42 @@ def test_net(net, image, text_threshold, link_threshold, low_text, cuda, poly, r
 
     return boxes, polys, ret_score_text
 
-def crop_object(img, boxes):
+def crop_object(img, boxes, result_dir, img_path):
     for i, box in enumerate(boxes):
         poly = np.array(box).astype(np.int32).reshape((-1))
-        print(poly)
-        # poly = [p for p in poly]
+        tmp_coords = []
+        it = iter(poly)
+        for coord in it:
+            tmp_coords.append([coord, next(it)])
+
+        tmp_coords = np.array(tmp_coords)
 
         # (1) Crop the bounding rect
-        # rect = cv2.boundingRect(poly)
-        # x,y,w,h = rect
-        # cropped = img[y:y+h, x:x+w].copy()
-        # cv2.imshow(cropped)
-        # cv2. waitKey(0)
+        rect = cv2.boundingRect(tmp_coords)
+        x,y,w,h = rect
+        cropped = img[y:y+h, x:x+w].copy()
 
+        ## (2) make mask
+        tmp_coords = tmp_coords - tmp_coords.min(axis=0)
 
+        mask = np.zeros(cropped.shape[:2], np.uint8)
+        cv2.drawContours(mask, [tmp_coords], -1, (255, 255, 255), -1, cv2.LINE_AA)
+
+        ## (3) do bit-op
+        dst = cv2.bitwise_and(cropped, cropped, mask=mask)
+
+        ## (4) add the white background
+        bg = np.ones_like(cropped, np.uint8)*255
+        cv2.bitwise_not(bg,bg, mask=mask)
+        dst2 = bg + dst
+
+        cv2.imwrite("cropped%s.jpg" % i, dst2)
+        
+        
         # strResult = ','.join([str(p) for p in poly]) + '\r\n'
         # print(strResult)
     # cropped_img = img[int(startY):int(endY), int(startX):int(endX)]
-    # cv2.imshow("Cropped Image", cropped_img)
-    # cv2.imwrite("cropped%s.jpg" % count, cropped_img)
+
 
 if __name__ == '__main__':
     # load net
@@ -177,14 +193,16 @@ if __name__ == '__main__':
     for k, image_path in enumerate(image_list):
         print("Test image {:d}/{:d}: {:s}".format(k+1, len(image_list), image_path), end='\r')
         image = imgproc.loadImage(image_path)
-
         bboxes, polys, score_text = test_net(net, image, args.text_threshold, args.link_threshold, args.low_text, args.cuda, args.poly, refine_net)
-        crop_object(image[:,:,::-1], polys)
 
         # save score text
         filename, file_ext = os.path.splitext(os.path.basename(image_path))
         mask_file = result_folder + "/res_" + filename + '_mask.jpg'
         cv2.imwrite(mask_file, score_text)
+
+        # cropping to be used for OCR
+        crop_object(image[:,:,::-1], polys, result_folder, filename)
+
 
         file_utils.saveResult(image_path, image[:,:,::-1], polys, dirname=result_folder)
 
